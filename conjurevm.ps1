@@ -7,22 +7,47 @@
     .DESCRIPTION
     A script that will build and maintain a CoreOS cluster of a given size with specified
     network configuration from a given vCenter Template. Defaults to Brian's home lab
-    environment.
+    environment. This is handled by injecting cloud-config.yml directly into the VM's vmx
+    file prior to first boot.
 
     .EXAMPLE
     conjurevm.ps1 
 
-    .PARAMETER
+    .PARAMETER NodeCount
+    Defaults to 3, this is used to determine how many nodes are in the cluster (also used for generating IP addresses)
+    Valid range from 1 to 20.
+
+    .PARAMETER vCenterServer
+    The target vCenter Server (Defaults to my internal/isolated homelab... change this for your implementation)
+
+    .PARAMETER ClusterDNS
+    DNS server for use by the nodes
+
+    .PARAMETER ClusterGateway
+    Each node's IPv4 gateway
+
+    .PARAMETER IPAddressStart
+     The first node's IP address. This will be incremented for each subsequent node. Note: The current version does 
+     not check for valid IP addresses at run time. If you start at 10.3.1.250 and make a cluster of 11 nodes, 
+     this will break things.
+
+     .PARAMETER Cidr
+     Defaults to 24, this indicates the subnet mask in cidr notation
+
+     .PARAMETER VMwareCred
+     PowerShell Credential object used to connect to the vCenterServer
+
+     .PARAMETER CoreOSTemplate
+     The name of the CoreOS template in vCenter
 
     .NOTES
     Author: Brian Marsh; Robert Labrie (robert.labrie@gmail.com)
-
-Author: robert.labrie@gmail.com
-Additional Magic: Brian Marsh
 #>
+
 [CmdletBinding()]
 param( 
       [Parameter(Mandatory = $false)]
+      [ValidateRange(1,20)
       [int] $NodeCount = 3,
 
       [Parameter(Mandatory = $false)]
@@ -35,13 +60,13 @@ param(
       [System.Net.IPAddress] $ClusterGateway = "10.3.1.1",
 
       [Parameter(Mandatory = $true)]
-      [System.Net.IPAddress] $IPaddressStart = "10.3.1.20",
+      [System.Net.IPAddress] $IPAddressStart = "10.3.1.20",
 
       [Parameter(Mandatory = $true)]
       [ValidateRange(0,32)
       [int] $Cidr = 24,
 
-      [Parameter(Mandatory = $true)]
+      [Parameter(Mandatory = $false)]
       [PSCredential] $VMwareCred,
 
       [Parameter(Mandatory = $true)]
@@ -50,18 +75,30 @@ param(
 
 BEGIN
 {
+    try
+    {
+        Import-Module VMware.VimAutomation.Core -ErrorAction Stop
+    }
+    catch
+    {  
+        Throw "Error loading VMware Module. Ensure it is available/installed before trying again."
+    }
+
+
+    # If no VMware Credential was provided, use default vCenter Credentials.
     if (! $VMwareCred)
     {
+        # Yes. Plaintext passwords are bad. But this is a homelab that is rebuilt periodically.
         $DefaultPw = "vmware" | ConvertTo-SecureString -asPlainText -Force
         $VMwareCred = New-Object System.Management.Automation.PSCredential("administrator@vsphere.local",$DefaultPw)
     }
     
-
-    # Get a new three node cluster discovery url
-    $req = Invoke-WebRequest -Uri 'https://discovery.etcd.io/new?size=3'
+    # Get a etcd cluster discovery url with the given size
+    $req = Invoke-WebRequest -Uri "https://discovery.etcd.io/new?size=$NodeCount"
     $req.Content
 
     # Get the current cloud-config content, then replace the existing discovery line with the new discovery url
+    # This is kludgey and should probably be replaced by yaml manipulation
     get-content .\cloud-config.yml | ForEach-Object {$_ -replace "discovery: .*", "discovery: $($req.Content)"} | Set-Content .\cloud-config.yml
 }
 PROCESS
@@ -70,18 +107,19 @@ PROCESS
     $vmlist = @()
     $vminfo = @{}
 
+    # Iterate through the Nodes, buildig out $vmlist & $vminfo
     for( [int]$Node = 1; $Node -le $NodeCount; $Node++)
     {
         #list of machines to make - hostname will be set to this unless overridden
         $vmlist += "coreos$node"
 
         # Determine our IP
-        $thisIP = ($IPaddressStart.Split(".")[0,1,2] -join ".")+"."+$([int]($IPaddressStart.Split(".")[3])+$Node)
+        $thisIP = ($IPAddressStart.Split(".")[0,1,2] -join ".")+"."+$([int]($IPAddressStart.Split(".")[3])+$Node)
         # Add hashmap of machine specific properties
         $vminfo["coreos$node"] = @{'interface.0.ip.0.address'="$thisIP/$Cidr"}
     }
 
-    #hashmap of properties common for all machines
+    # Hash properties that covers network config for all nodes
     $gProps = @{
         'dns.server.0'=$ClusterDNS;
         'interface.0.route.0.gateway'=$ClusterGateway;
@@ -93,32 +131,60 @@ PROCESS
     #pack in the cloud config
     if (Test-Path .\cloud-config.yml)
     {
-        $cc = Get-Content "cloud-config.yml" -raw
-        $b = [System.Text.Encoding]::UTF8.GetBytes($cc)
-        $gProps['coreos.config.data'] = [System.Convert]::ToBase64String($b)
+        # pull in the cloud config content
+        $RawCloudConfig = Get-Content "cloud-config.yml" -raw
+        
+        # Encode as UTf8 in bytes
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($RawCloudConfig)
+        
+        # Add to the properties hash the coreos config data & specify the encoding
+        $gProps['coreos.config.data'] = [System.Convert]::ToBase64String($bytes)
         $gProps['coreos.config.data.encoding'] = 'base64'
     }
+    else
+    {
+        Throw "No cloud-config.yml found. Please create and add to this folder"
+    }
 
-    #load VMWare snapin and connect
-    Add-PSSnapin VMware.VimAutomation.Core
-    if (!($global:DefaultVIServers.Count)) { Connect-VIServer $vCenterServer -Credential $VMwareCred}
+    # Connect to vCenter (Assuming no vCenters are already connected.
+    if (!($global:DefaultVIServers.Count))
+    { 
+        Connect-VIServer $vCenterServer -Credential $VMwareCred
+    }
 
-    #build the VMs as necessary
+    # Time to Build!
+    #
+    # Get the CoreOS template by name
     $template = Get-Template -Name $CoreOSTemplate
+
+    # Get all VMHosts
     $vmhost = Get-VMHost
+
+    # Initialize the tasks array (to contain/track the New-VM tasks)
     $tasks = @()
+
+    # For each of our new CoreOS VMs
     foreach ($vmname in $vmlist)
     {
-        if (get-vm | Where-Object {$_.Name -eq $vmname }) { continue }
-        Write-Host "creating $vmname"
+        # If there's already a VM that has this node's name, skip it.
+        if (get-vm | Where-Object {$_.Name -eq $vmname }) 
+        { 
+            continue 
+        }
+
+        Write-Information -MessageData "Creating VM $vmname" -InformationAction Continue
+        
+        # Create the New VM
         $task = New-VM -Template $template -Name $vmname -host $vmhost -RunAsync
+
+        # Add this task to the list
         $tasks += $task
     }
 
     #wait for pending builds to complete
     if ($tasks)
     {
-        Write-Host "Waiting for clones to complete"
+        Write-Information -MessageData "Waiting for clones to complete" -InformationAction Continue
         foreach ($task in $tasks)
         {
             Wait-Task $task
@@ -128,16 +194,27 @@ PROCESS
     #setup and send the config
     foreach ($vmname in $vmlist)
     {
+        # Get this VM's VM object & set a local path for the vm config file
         $vmxLocal = "$($ENV:TEMP)\$($vmname).vmx"
         $vm = Get-VM -Name $vmname
     
         #power off if running
-        if ($vm.PowerState -eq "PoweredOn") { $vm | Stop-VM -Confirm:$false }
+        if ($vm.PowerState -eq "PoweredOn") 
+        { 
+            $vm | Stop-VM -Confirm:$false 
+        }
 
         #fetch the VMX file
         $datastore = $vm | Get-Datastore
         $vmxRemote = "$($datastore.name):\$($vmname)\$($vmname).vmx"
-        if (Get-PSDrive | Where-Object { $_.Name -eq $datastore.Name}) { Remove-PSDrive -Name $datastore.Name }
+        
+        # If we already have a PS Drive for this datastore, remove it
+        if (Get-PSDrive | Where-Object { $_.Name -eq $datastore.Name})
+        { 
+            Remove-PSDrive -Name $datastore.Name 
+        }
+
+        # Create a new PSDrive from the VM's datastore & Copy the config file to the local path
         $null = New-PSDrive -Location $datastore -Name $datastore.Name -PSProvider VimDatastore -Root "\"
         Copy-DatastoreItem -Item $vmxRemote -Destination $vmxLocal
     
@@ -172,5 +249,9 @@ PROCESS
             $status = (Get-VM -name $vmname | Get-View).Guest.ToolsStatus
         }
     
+    }
+    END
+    {
+        Write-Debug "Anything else to do?"
     }
 }
