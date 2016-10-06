@@ -1,27 +1,58 @@
 ﻿<#
-A script to build and maintain a CoreOS cluster
-- Builds any machines that don't exist
-- Stops and updates machine .vmx file as necessary
-- Waits for machine to start before taking down and updating next node
+    .SYNOPSIS
+    A script to build and maintain a CoreOS cluster: Builds any machines that don't exist, 
+    Stops and updates machine .vmx file as necessary, Waits for machine to start before 
+    taking down and updating next node
+
+    .DESCRIPTION
+    A script that will build and maintain a CoreOS cluster of a given size with specified
+    network configuration from a given vCenter Template. Defaults to Brian's home lab
+    environment.
+
+    .EXAMPLE
+    conjurevm.ps1 
+
+    .PARAMETER
+
+    .NOTES
+    Author: Brian Marsh; Robert Labrie (robert.labrie@gmail.com)
 
 Author: robert.labrie@gmail.com
 Additional Magic: Brian Marsh
 #>
 [CmdletBinding()]
-param( $NodeCount=3,
-       $vCenterServer = "10.0.0.153",
-       $ClusterDNS = "10.3.1.1",
-       $ClusterGateway = "10.3.1.1",
-       $IPaddressStart = "10.3.1.20",
-       $Cidr = 24,
-       $VMwareCred,
-       $CoreOSTemplate = "coreos_production_vmware_ova"
+param( 
+      [Parameter(Mandatory = $false)]
+      [int] $NodeCount = 3,
+
+      [Parameter(Mandatory = $false)]
+      [System.Net.IPAddress] $vCenterServer = "10.0.0.153",
+      
+      [Parameter(Mandatory = $false)]
+      [System.Net.IPAddress] $ClusterDNS = "8.8.8.8",
+
+      [Parameter(Mandatory = $true)] 
+      [System.Net.IPAddress] $ClusterGateway = "10.3.1.1",
+
+      [Parameter(Mandatory = $true)]
+      [System.Net.IPAddress] $IPaddressStart = "10.3.1.20",
+
+      [Parameter(Mandatory = $true)]
+      [ValidateRange(0,32)
+      [int] $Cidr = 24,
+
+      [Parameter(Mandatory = $true)]
+      [PSCredential] $VMwareCred,
+
+      [Parameter(Mandatory = $true)]
+      [String] $CoreOSTemplate = "coreos_production_vmware_ova"
      )
+
 BEGIN
 {
     if (! $VMwareCred)
     {
-        $DefaultPw = "vmware" |ConvertTo-SecureString -asPlainText -Force
+        $DefaultPw = "vmware" | ConvertTo-SecureString -asPlainText -Force
         $VMwareCred = New-Object System.Management.Automation.PSCredential("administrator@vsphere.local",$DefaultPw)
     }
     
