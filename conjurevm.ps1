@@ -99,7 +99,15 @@ BEGIN
 
     # Get the current cloud-config content, then replace the existing discovery line with the new discovery url
     # This is kludgey and should probably be replaced by yaml manipulation
-    get-content .\cloud-config.yml | ForEach-Object {$_ -replace "discovery: .*", "discovery: $($req.Content)"} | Set-Content .\cloud-config.yml
+    try
+    {
+        $RawCloudConfig = get-content .\cloud-config.yml -raw -ErrorAction Stop | ForEach-Object {$_ -replace "discovery: .*", "discovery: $($req.Content)"}
+    }
+    catch
+    {
+        Write-Debug "Something Went Wrong... Debug?"
+        Throw "Couldn't edit cloud-config: $($error[0].Exception)"
+    }
 }
 PROCESS
 {
@@ -114,7 +122,8 @@ PROCESS
         $vmlist += "coreos$node"
 
         # Determine our IP
-        $thisIP = ($IPAddressStart.Split(".")[0,1,2] -join ".")+"."+$([int]($IPAddressStart.Split(".")[3])+$Node)
+        $thisIP = ($IPAddressStart.ToString().Split(".")[0,1,2] -join ".")+"."+$([int]($IPAddressStart.ToString().Split(".")[3])+$Node)
+
         # Add hashmap of machine specific properties
         $vminfo["coreos$node"] = @{'interface.0.ip.0.address'="$thisIP/$Cidr"}
     }
@@ -127,12 +136,11 @@ PROCESS
         'interface.0.name' = 'ens192'; 
         'interface.0.role'='private';
         'interface.0.dhcp'='no';}
-
     #pack in the cloud config
     if (Test-Path .\cloud-config.yml)
     {
         # pull in the cloud config content
-        $RawCloudConfig = Get-Content "cloud-config.yml" -raw
+        #$RawCloudConfig = Get-Content "cloud-config.yml" -raw
         
         # Encode as UTf8 in bytes
         $bytes = [System.Text.Encoding]::UTF8.GetBytes($RawCloudConfig)
@@ -250,8 +258,8 @@ PROCESS
         }
     
     }
-    END
-    {
-        Write-Debug "Anything else to do?"
-    }
+}
+END
+{
+    Write-Debug "Anything else to do?"
 }
