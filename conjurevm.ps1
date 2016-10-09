@@ -47,7 +47,7 @@
 [CmdletBinding()]
 param( 
       [Parameter(Mandatory = $false)]
-      [ValidateRange(1,20)
+      [ValidateRange(1,20)]
       [int] $NodeCount = 3,
 
       [Parameter(Mandatory = $false)]
@@ -56,20 +56,20 @@ param(
       [Parameter(Mandatory = $false)]
       [System.Net.IPAddress] $ClusterDNS = "8.8.8.8",
 
-      [Parameter(Mandatory = $true)] 
+      [Parameter(Mandatory = $false)] 
       [System.Net.IPAddress] $ClusterGateway = "10.3.1.1",
 
-      [Parameter(Mandatory = $true)]
+      [Parameter(Mandatory = $false)]
       [System.Net.IPAddress] $IPAddressStart = "10.3.1.20",
 
-      [Parameter(Mandatory = $true)]
-      [ValidateRange(0,32)
+      [Parameter(Mandatory = $false)]
+      [ValidateRange(0,32)]
       [int] $Cidr = 24,
 
       [Parameter(Mandatory = $false)]
       [PSCredential] $VMwareCred,
 
-      [Parameter(Mandatory = $true)]
+      [Parameter(Mandatory = $false)]
       [String] $CoreOSTemplate = "coreos_production_vmware_ova"
      )
 
