@@ -23,22 +23,30 @@
     .PARAMETER ClusterDNS
     DNS server for use by the nodes
 
-    .PARAMETER ClusterGateway
-    Each node's IPv4 gateway
+    .PARAMETER PubGateway
+    Each node's Public IPv4 gateway
 
-    .PARAMETER IPAddressStart
-     The first node's IP address. This will be incremented for each subsequent node. Note: The current version does 
-     not check for valid IP addresses at run time. If you start at 10.3.1.250 and make a cluster of 11 nodes, 
-     this will break things.
+    .PARAMETER PrivGateway
+    Each node's Private IPv4 gateway
 
-     .PARAMETER Cidr
-     Defaults to 24, this indicates the subnet mask in cidr notation
+    .PARAMETER PubIPStart
+    The first node's IP address. This will be incremented for each subsequent node. Note: The current version does 
+    not check for valid IP addresses at run time. If you start at 10.3.1.250 and make a cluster of 11 nodes, 
+    this will break things.
 
-     .PARAMETER VMwareCred
-     PowerShell Credential object used to connect to the vCenterServer
+    .PARAMETER PubIPStart
+    The first node's IP address. This will be incremented for each subsequent node. Note: The current version does 
+    not check for valid IP addresses at run time. If you start at 10.3.1.250 and make a cluster of 11 nodes, 
+    this will break things.
 
-     .PARAMETER CoreOSTemplate
-     The name of the CoreOS template in vCenter
+    .PARAMETER Cidr
+    Defaults to 24, this indicates the subnet mask in cidr notation
+
+    .PARAMETER VMwareCred
+    PowerShell Credential object used to connect to the vCenterServer
+
+    .PARAMETER CoreOSTemplate
+    The name of the CoreOS template in vCenter
 
     .NOTES
     Author: Brian Marsh; Robert Labrie (robert.labrie@gmail.com)
@@ -57,10 +65,16 @@ param(
       [System.Net.IPAddress] $ClusterDNS = "8.8.8.8",
 
       [Parameter(Mandatory = $false)] 
-      [System.Net.IPAddress] $ClusterGateway = "10.3.1.1",
+      [System.Net.IPAddress] $PubGateway = "10.3.1.1",
+
+      [Parameter(Mandatory = $false)] 
+      [System.Net.IPAddress] $PrivGateway = "10.4.1.1",
 
       [Parameter(Mandatory = $false)]
-      [System.Net.IPAddress] $IPAddressStart = "10.3.1.20",
+      [System.Net.IPAddress] $PubIPStart = "10.3.1.20",
+
+      [Parameter(Mandatory = $false)]
+      [System.Net.IPAddress] $PrivIPStart = "10.4.1.20",
 
       [Parameter(Mandatory = $false)]
       [ValidateRange(0,32)]
@@ -122,20 +136,29 @@ PROCESS
         $vmlist += "coreos$node"
 
         # Determine our IP
-        $thisIP = ($IPAddressStart.ToString().Split(".")[0,1,2] -join ".")+"."+$([int]($IPAddressStart.ToString().Split(".")[3])+$Node)
+        $PubIP  = ($PubIPStart.ToString().Split(".")[0,1,2] -join ".")+"."+$([int]($PubIPStart.ToString().Split(".")[3])+$Node)
+
+        $PrivIP = ($PrivIPStart.ToString().Split(".")[0,1,2] -join ".")+"."+$([int]($PrivIPStart.ToString().Split(".")[3])+$Node)
 
         # Add hashmap of machine specific properties
-        $vminfo["coreos$node"] = @{'interface.0.ip.0.address'="$thisIP/$Cidr"}
+        $vminfo["coreos$node"] = @{'interface.0.ip.0.address'="$PubIP/$Cidr";'interface.1.ip.0.address'="$PrivIP/$Cidr"}
     }
 
     # Hash properties that covers network config for all nodes
     $gProps = @{
         'dns.server.0'=$ClusterDNS;
-        'interface.0.route.0.gateway'=$ClusterGateway;
+        'interface.0.route.0.gateway'=$PubGateway;
         'interface.0.route.0.destination'='0.0.0.0/0';
         'interface.0.name' = 'ens192'; 
-        'interface.0.role'='private';
-        'interface.0.dhcp'='no';}
+        'interface.0.role'='public';
+        'interface.0.dhcp'='no';
+        'interface.1.route.0.gateway'=$PrivGateway;
+        'interface.1.route.0.destination'='0.0.0.0/0';
+        'interface.1.name' = 'ens192'; 
+        'interface.1.role'='private';
+        'interface.1.dhcp'='no';
+    }
+write-debug "shittttt"
     #pack in the cloud config
     if (Test-Path .\cloud-config.yml)
     {
