@@ -84,7 +84,9 @@ param(
       [PSCredential] $VMwareCred,
 
       [Parameter(Mandatory = $false)]
-      [String] $CoreOSTemplate = "coreos_production_vmware_ova"
+      [String] $CoreOSTemplate = "coreos_production_vmware_ova",
+
+      [String] $TargetFolder = "coreos-cluster"
      )
 
 BEGIN
@@ -154,11 +156,11 @@ PROCESS
         'interface.0.dhcp'='no';
         'interface.1.route.0.gateway'=$PrivGateway;
         'interface.1.route.0.destination'='0.0.0.0/0';
-        'interface.1.name' = 'ens192'; 
+        'interface.1.name' = 'ens224'; 
         'interface.1.role'='private';
         'interface.1.dhcp'='no';
     }
-write-debug "shittttt"
+
     #pack in the cloud config
     if (Test-Path .\cloud-config.yml)
     {
@@ -177,6 +179,8 @@ write-debug "shittttt"
         Throw "No cloud-config.yml found. Please create and add to this folder"
     }
 
+    Write-Debug "About to actually do things... continue?"
+
     # Connect to vCenter (Assuming no vCenters are already connected.
     if (!($global:DefaultVIServers.Count))
     { 
@@ -190,6 +194,9 @@ write-debug "shittttt"
 
     # Get all VMHosts
     $vmhost = Get-VMHost
+    
+    # Try to get the folder specified
+    $targetFolder = Get-Folder -Name $TargetFolder
 
     # Initialize the tasks array (to contain/track the New-VM tasks)
     $tasks = @()
@@ -225,6 +232,11 @@ write-debug "shittttt"
     #setup and send the config
     foreach ($vmname in $vmlist)
     {
+        
+        if ($targetFolder)
+        {
+            Get-VM -Name $vmname | Move-VM -Destination $targetFolder
+        }
         # Get this VM's VM object & set a local path for the vm config file
         $vmxLocal = "$($ENV:TEMP)\$($vmname).vmx"
         $vm = Get-VM -Name $vmname
