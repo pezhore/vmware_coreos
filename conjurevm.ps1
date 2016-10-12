@@ -58,6 +58,10 @@ param(
       [ValidateRange(1,20)]
       [int] $NodeCount = 3,
 
+      [Switch] $RethinkDB,
+
+      [int] $nodeStart = 1,
+
       [Parameter(Mandatory = $false)]
       [System.Net.IPAddress] $vCenterServer = "10.0.0.153",
       
@@ -93,7 +97,7 @@ BEGIN
 {
     try
     {
-        Import-Module VMware.VimAutomation.Core -ErrorAction Stop
+        Import-Module VMware.VimAutomation.Core -ErrorAction Stop -Verbose:$False -Debug:$False
     }
     catch
     {  
@@ -124,6 +128,15 @@ BEGIN
         Write-Debug "Something Went Wrong... Debug?"
         Throw "Couldn't edit cloud-config: $($error[0].Exception)"
     }
+
+    if ($RethinkDB)
+    {
+        $cloudConfig = .\cloud-config-rethink.yml
+    }
+    else
+    {
+        $cloudConfig = .\cloud-config.yml    
+    }
 }
 PROCESS
 {
@@ -132,7 +145,7 @@ PROCESS
     $vminfo = @{}
 
     # Iterate through the Nodes, buildig out $vmlist & $vminfo
-    for( [int]$Node = 1; $Node -le $NodeCount; $Node++)
+    for( [int]$Node = $NodeStart; $Node -lt ($NodeCount + $nodeStart); $Node++)
     {
         #list of machines to make - hostname will be set to this unless overridden
         $vmlist += "coreos$node"
@@ -154,8 +167,6 @@ PROCESS
         'interface.0.name' = 'ens192'; 
         'interface.0.role'='public';
         'interface.0.dhcp'='no';
-        'interface.1.route.0.gateway'=$PrivGateway;
-        'interface.1.route.0.destination'='0.0.0.0/0';
         'interface.1.name' = 'ens224'; 
         'interface.1.role'='private';
         'interface.1.dhcp'='no';
@@ -184,19 +195,19 @@ PROCESS
     # Connect to vCenter (Assuming no vCenters are already connected.
     if (!($global:DefaultVIServers.Count))
     { 
-        Connect-VIServer $vCenterServer -Credential $VMwareCred
+        Connect-VIServer $vCenterServer -Credential $VMwareCred -Verbose:$False -Debug:$False
     }
 
     # Time to Build!
     #
     # Get the CoreOS template by name
-    $template = Get-Template -Name $CoreOSTemplate
+    $template = Get-Template -Name $CoreOSTemplate -Verbose:$False -Debug:$False
 
     # Get all VMHosts
-    $vmhost = Get-VMHost
+    $vmhost = Get-VMHost -Verbose:$False -Debug:$False
     
     # Try to get the folder specified
-    $targetFolder = Get-Folder -Name $TargetFolder
+    $targetFolder = Get-Folder -Name $TargetFolder -Verbose:$False -Debug:$False
 
     # Initialize the tasks array (to contain/track the New-VM tasks)
     $tasks = @()
@@ -205,7 +216,7 @@ PROCESS
     foreach ($vmname in $vmlist)
     {
         # If there's already a VM that has this node's name, skip it.
-        if (get-vm | Where-Object {$_.Name -eq $vmname }) 
+        if (get-vm  -Verbose:$False -Debug:$False | Where-Object {$_.Name -eq $vmname }) 
         { 
             continue 
         }
@@ -213,7 +224,7 @@ PROCESS
         Write-Information -MessageData "Creating VM $vmname" -InformationAction Continue
         
         # Create the New VM
-        $task = New-VM -Template $template -Name $vmname -host $vmhost -RunAsync
+        $task = New-VM -Template $template -Name $vmname -host $vmhost -RunAsync -Verbose:$False -Debug:$False
 
         # Add this task to the list
         $tasks += $task
@@ -225,7 +236,7 @@ PROCESS
         Write-Information -MessageData "Waiting for clones to complete" -InformationAction Continue
         foreach ($task in $tasks)
         {
-            Wait-Task $task
+            Wait-Task $task -Verbose:$False -Debug:$False
         }
     }
 
@@ -235,31 +246,31 @@ PROCESS
         
         if ($targetFolder)
         {
-            Get-VM -Name $vmname | Move-VM -Destination $targetFolder
+            Get-VM -Name $vmname  -Verbose:$False -Debug:$False | Move-VM -Destination $targetFolder -Verbose:$False -Debug:$False
         }
         # Get this VM's VM object & set a local path for the vm config file
         $vmxLocal = "$($ENV:TEMP)\$($vmname).vmx"
-        $vm = Get-VM -Name $vmname
+        $vm = Get-VM -Name $vmname -Verbose:$False -Debug:$False
     
         #power off if running
         if ($vm.PowerState -eq "PoweredOn") 
         { 
-            $vm | Stop-VM -Confirm:$false 
+            $vm | Stop-VM -Confirm:$false -Verbose:$False -Debug:$False
         }
 
         #fetch the VMX file
-        $datastore = $vm | Get-Datastore
+        $datastore = $vm | Get-Datastore -Verbose:$False -Debug:$False
         $vmxRemote = "$($datastore.name):\$($vmname)\$($vmname).vmx"
         
         # If we already have a PS Drive for this datastore, remove it
-        if (Get-PSDrive | Where-Object { $_.Name -eq $datastore.Name})
+        if (Get-PSDrive -Verbose:$False -Debug:$False | Where-Object { $_.Name -eq $datastore.Name})
         { 
-            Remove-PSDrive -Name $datastore.Name 
+            Remove-PSDrive -Verbose:$False -Debug:$False -Name $datastore.Name 
         }
 
         # Create a new PSDrive from the VM's datastore & Copy the config file to the local path
-        $null = New-PSDrive -Location $datastore -Name $datastore.Name -PSProvider VimDatastore -Root "\"
-        Copy-DatastoreItem -Item $vmxRemote -Destination $vmxLocal
+        $null = New-PSDrive -Location $datastore -Name $datastore.Name -PSProvider VimDatastore -Root "\" -Verbose:$False -Debug:$False
+        Copy-DatastoreItem -Item $vmxRemote -Destination $vmxLocal -Verbose:$False -Debug:$False -Verbose:$False -Debug:$False
     
         #get the file and strip out any existing guestinfo
         $vmx = ((Get-Content $vmxLocal | Select-String -Pattern guestinfo -NotMatch) -join "`n").Trim()
@@ -281,15 +292,15 @@ PROCESS
         $vmx | Out-File $vmxLocal -Encoding ascii
 
         #replace the VMX in the datastore
-        Copy-DatastoreItem -Item $vmxLocal -Destination $vmxRemote
+        Copy-DatastoreItem -Item $vmxLocal -Destination $vmxRemote -Verbose:$False -Debug:$False
 
         #start the VM
-        $vm | Start-VM
+        $vm | Start-VM -Verbose:$False -Debug:$False
         $status = "toolsNotRunning"
         while ($status -eq "toolsNotRunning")
         {
             Start-Sleep -Seconds 1
-            $status = (Get-VM -name $vmname | Get-View).Guest.ToolsStatus
+            $status = (Get-VM -name $vmname  -Verbose:$False -Debug:$False | Get-View -Verbose:$False -Debug:$False).Guest.ToolsStatus
         }
     
     }
