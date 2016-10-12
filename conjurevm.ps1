@@ -131,11 +131,11 @@ BEGIN
 
     if ($RethinkDB)
     {
-        $cloudConfig = .\cloud-config-rethink.yml
+        $cloudConfig = ".\cloud-config-rethink.yml"
     }
     else
     {
-        $cloudConfig = .\cloud-config.yml    
+        $cloudConfig = ".\cloud-config.yml"
     }
 }
 PROCESS
