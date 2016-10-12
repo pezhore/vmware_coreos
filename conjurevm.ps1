@@ -270,7 +270,7 @@ PROCESS
 
         # Create a new PSDrive from the VM's datastore & Copy the config file to the local path
         $null = New-PSDrive -Location $datastore -Name $datastore.Name -PSProvider VimDatastore -Root "\" -Verbose:$False -Debug:$False
-        Copy-DatastoreItem -Item $vmxRemote -Destination $vmxLocal -Verbose:$False -Debug:$False -Verbose:$False -Debug:$False
+        Copy-DatastoreItem -Item $vmxRemote -Destination $vmxLocal -Verbose:$False -Debug:$False
     
         #get the file and strip out any existing guestinfo
         $vmx = ((Get-Content $vmxLocal | Select-String -Pattern guestinfo -NotMatch) -join "`n").Trim()
