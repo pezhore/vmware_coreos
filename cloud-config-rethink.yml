@@ -1,0 +1,58 @@
+#cloud-config
+coreos:
+  etcd2:
+    discovery: https://discovery.etcd.io/d259912ba681a5ce1731e55243f13fa3
+    listen-client-urls: http://0.0.0.0:2379,http://0.0.0.0:4001
+    advertise-client-urls: http://$private_ipv4:2379
+    listen-peer-urls: http://$private_ipv4:2380,http://$private_ipv4:7001
+    initial-advertise-peer-urls: http://$private_ipv4:2380
+  fleet:
+    etcd_request_timeout: 10  
+
+  units:
+    - name: etcd2.service
+      command: start
+    - name: fleet.service
+      command: start
+    - name: rethinkdb-discovery.service
+      command: start
+      content: |
+        [Unit]
+        Requires=etcd2.service fleet.service docker.service
+        After=etcd2.service fleet.service docker.service
+
+        [Service]
+        EnvironmentFile=/etc/environment
+        ExecStart=/bin/sh -c "while true; do etcdctl set /announce/services/rethinkdb-${COREOS_PRIVATE_IPV4} ${COREOS_PRIVATE_IPV4} --ttl 60; sleep 45; done"
+        ExecStop=/usr/bin/etcdctl rm /announce/services/rethinkdb-${COREOS_PRIVATE_IPV4}
+    - name: rethinkdb.service
+      command: start
+      content: |
+        [Unit]
+        Requires=rethinkdb-discovery.service
+        BindsTo=rethinkdb-discovery.service
+
+        [Service]
+        EnvironmentFile=/etc/environment
+        TimeoutStartSec=0
+        ExecStartPre=-/usr/bin/docker kill rethinkdb
+        ExecStartPre=-/usr/bin/docker rm rethinkdb
+        ExecStartPre=-/usr/bin/mkdir -p /data/rethinkdb
+        ExecStartPre=/usr/bin/docker pull rethinkdb:2.1.5
+        ExecStart=/bin/sh -c '/usr/bin/docker run --name rethinkdb     \
+            -p ${COREOS_PRIVATE_IPV4}:18080:18080                      \
+            -p ${COREOS_PRIVATE_IPV4}:28015:28015                      \
+            -p ${COREOS_PRIVATE_IPV4}:29015:29015                      \
+            -v /data/rethinkdb/:/data/                                 \
+            rethinkdb:2.1.5 rethinkdb --bind all                       \
+            --http-port 18080                                          \
+            --canonical-address ${COREOS_PRIVATE_IPV4}                 \
+            $(/usr/bin/etcdctl ls /announce/services |                 \
+                xargs -I {} /usr/bin/etcdctl get {} |                  \
+                sed s/^/"--join "/ | sed s/$/":29015"/ |               \
+                tr "\n" " ")'
+        ExecStop=/usr/bin/docker stop rethinkdb
+ssh_authorized_keys:
+  - ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQC64JbzrJ3rhR+OBIvha3T4kRWl12GY8lGxRxDD8+naQdTpiRpup/bkYywupDk/tvy4rGZ4Y4r6C/g4AZM0s9TRdN/0ZEuk7u9DgCuK7/ouxbtK0wTSrBFIYc5m1RifJVrdpRZmHOJX4tgU3fJ7mUq5hUIbGSRTxF3U89PN4Z8ERMniPyEHuildFo9UXq7PP69Po7b7SdVjUkULnGCy+Zp936GOG8avNdGnUxu6SSo3Ru0xGU+2ftsb9rN/0p4a62p8FX/num9zuAlTymVSw1XzmdnzqZHbdd9Q/lkGz48D7fl+pWAYsiU2AbmofeH+jl+MHx1TsEcLW+kK/ReDWzECM1DecyG0baWaZnP92yWi/KapXb9mnjC1Pswv2RYilg8VyqepJkvlrcHGgvov+Dux0JpcP2hDRP3mmZu6+oOAs4VsjXJz7DouENCW1txrGFic37dLRkKhvVmsMhkF8jArNHXVMLdGnMo3OsgGdxwnd6XLRm8Uhmh9VZcCLCYtLxrDihlflV45o/tRauf72XF0WaUU/IXXPcQMTN7uTsElRGmLRi5NDV5nYtgS2Tk3YwRgL7u6qTf0pOlN4b50EZ5PiyLmOQBmiCTT64ibmrrv7qgEbvHR3aUjpg89iUsgxI+I/EWMjY677BdLhVEQQeZY+MUK9IKjlMqMjtKkDAbKrQ== pezhore@gmail.com
+  - ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQDTfb0pGmJPd8mp24ChfdPutuOyIuW3TSip2SZdZOw74kV71y1w8pVk7w/fTKSNJzN7CZH8K7ZTDtWZ2m/Det036C2JR4WdSbXyKUWz4nFh5ojQ+oW6QfZy8wDnqxfWc/V7dth2iYZTpFkOuHx1+1vUrOVrmUyaHhae+qGoH0y/W5xpbZ/HyfcITu+Uui4leBrGY25zb0bccKuN/GnHOrDwBtBp4m544GEgRe1ujuFO244gtOH7FCUge8M/8MHxcg4iOZbWE4szEOZMMqsxpnDUYeYc6700TderUQ7ihRreYbBNNj77SmafybArQ68IUOytO81P9C6pTyoN4kjJ0Xx98pg1HtDxy6lscemckBlZ06qP+iS++XcRNaAd77WbEanZLdHuXmgTvGinGkpjHMrDvxsFMXS477gqNLb7CeVe4YRNjD1kdDRzE6dUJM6ajs4JbypsB5BoNVbslXwh3SjTf113OcpHD8fva/PxCNjE7STV9ji2EPrkWxq95N9+5Rj7hz1cCHgX8+w1m5Y+W3yao1bB87lC6CgLvLK+uDlJ3X8A9ZXQCQ5ndHO+WvKx4JoLEbRy7aMwr7hiArzoB4Fb0nfPWpAovcMFFujNwUuTXRNYUIPZ3t2kT1ta7UqqPSMumwOQOK5Pc14VUCJM0YUq9Q/0HWMZQFPSEPXcL/gsdQ== ahawkins.mail@gmail.com
+  - ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQDoC1KWDNO1lzFKPj1PQjc7bbH0zPSJYVEZ6DmcqWMTSyAxATDHYTj3qmW3Vcy48Dof7H5tgZCEsIPYqS+THnxfkQYmE5djnFHUUPPe1UjG2X/JwjF7Y0i+gGPvsU3RLZrc/xAUF6J0moSiBzjzNN2/kC6Hj0Jj9mKCEpyZwc/rjonWadnYHY3eSeqPxKL+6IiEN1qZCORLJl0i7N+tWo9ruYpBkY82WczAzXWbdRw/ti2kSGn3vnnIj9TC2Z0jUsIvckUS4a7Cw/2uyxQw9M54dbD4W7OtN4jxhqh3tIJtdhskECTTqTIanGk9s0uAFAyRy2qTi/CFTg3qjPrWr1AWjqD8PDadG/fxoljTGe1FESI8Yw1Ky9JOEM8PzlKaaDte8/QdoucoKEA22YlehtVXAGA3iAYEWI/hx4AbERMs51sQsZRimg39SR9Ha+pg0bqTQYUyrBmn4NMMI9XT/suZi/xOgVf0OpjKl4c30tcKwiysTUA8xng93t7DLVl5OgydM02uiYyGmK3sm0zyY3laMxieycuqcGzUDD/dr7D7ZfdDtQRi7fv43P7G0Qp1e/H343ALpcFyDbucpQeaeTEB49LVHUB+8ZG7m5BYYbSSBWDMYIL9ykj/9TXaxg3dWPLv0rAvJ/EpOE+ivfKzE0+WU82L10YYbVBYltk1nmft+Q== pezhore@gmail.com
